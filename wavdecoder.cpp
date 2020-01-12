@@ -1,0 +1,142 @@
+#include "wavdecoder.h"
+#include <fstream>
+#include <vector>
+#include <iostream>
+#include <string.h>
+#include <algorithm>
+#include <cstdlib>
+
+using namespace std;
+
+WavDecoder::WavDecoder()
+{
+
+}
+
+WavDecoder::WavDecoder(const string& filename)
+{
+    _data = vector<double>();
+    _readFromFile(filename);
+}
+
+void WavDecoder::_readFromFile(const string& fileName)
+{
+    ifstream fin;
+    //Открываем в бинарном формате
+    fin.open(fileName, ios::binary);
+    if (fin.fail()) {
+        cout<<"Ошибка чтения с файла"<<endl;
+        //return;
+    }
+    //Создаем заголовок
+    _header = new _Header(fin);
+    //Проверка заголовка
+    if (!(_header->check())){
+        cout<<"Ошибка в header.check()"<<endl;//return;
+    }
+    _readData(fin);
+    _hasData = true;
+}
+
+WavDecoder::_Header::_Header(ifstream& fin)
+{
+    fin.read(chunkId, 4);
+    fin.read(chunkSize, 4);
+    fin.read(format, 4);
+    fin.read(subChunk1Id, 4);
+    fin.read(subChunk1Size, 4);
+    fin.read(reinterpret_cast<char*>(&audioFormat), 2);
+    fin.read(reinterpret_cast<char*>(&numChannels), 2);
+    fin.read(sampleRate, 4);
+    fin.read(byteRate, 4);
+    fin.read(blockAlign, 2);
+    fin.read(reinterpret_cast<char*>(&bitsPerSample), 2);
+    fin.read(subChunk2Id, 4);
+    fin.read(subChunk2Size, 4);
+}
+
+bool WavDecoder::_Header::check() const
+{
+    if (!_compare_strings(chunkId, "RIFF", 4)){
+        cout<<"Ошибка в chunkId"<<endl;
+        return false;
+    }
+    if (!_compare_strings(format, "WAVE", 4)){
+        cout<<"Ошибка в format"<<endl;
+        return false;
+    }
+    char tmp[4] = {'f', 'm', 't', 32};
+    if (!_compare_strings(subChunk1Id, tmp, 4)){
+        cout<<"Ошибка в subChunk1Id"<<endl;
+        return false;
+    }
+    //Поддерживается только PCM
+    if (audioFormat != 1)
+    {
+        cout<<"Ошибка в audioFormat "<<audioFormat<<endl;
+        return false;
+    }
+    //Пока что только одноканальное аудио
+    if (numChannels > 2){
+        cout<<"Ошибка в numChannels "<< (int)numChannels << "<-" << endl;
+        return false;
+    }
+    if (!_compare_strings(subChunk2Id, "data", 4)){
+        cout<<"Ошибка в subChunk2Id "<<subChunk2Id<<"<-"<<endl;
+        return false;
+    }
+    //Надо будет допилить и остальные
+    if (bitsPerSample != 16){
+        cout<<"Ошибка в bitsPerSample"<<endl;
+        return false;
+    }
+    return true;
+}
+
+void WavDecoder::_readData(ifstream & fin)
+{
+    int16_t tmp_val, max_val = 0, min_val = 0;
+    vector<int16_t> raw_data;
+
+    while (!fin.eof()){
+        fin.read((char*)(&tmp_val), 2); // было (char*)()
+        if (max_val < tmp_val){ //поменял знаки сравнения
+            max_val = tmp_val;
+        }
+        if (min_val > tmp_val){ //поменял знаки сравнения
+            min_val = tmp_val;
+        }
+        raw_data.push_back(tmp_val);
+        if (_header->numChannels == 2)
+            fin.ignore(2);
+    }
+    fin.close();
+    int16_t normalization_coef = max(max_val, (int16_t)(-min_val));
+    for (auto& e: raw_data){
+      _data.push_back(static_cast<double>(e)/normalization_coef);
+    }
+}
+
+WavDecoder::~WavDecoder()
+{
+    delete _header;
+}
+
+bool WavDecoder::hasData() const
+{
+    return _hasData;
+}
+
+vector<double> WavDecoder::getData() const
+{
+    return _data;
+}
+
+bool WavDecoder::_Header::_compare_strings(const char first[], const char second[], int size) const
+{
+    for (int i=0; i<size; i++){
+        if (first[i] != second[i])
+            return false;
+    }
+    return true;
+}
